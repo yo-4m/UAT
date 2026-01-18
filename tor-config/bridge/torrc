@@ -1,0 +1,25 @@
+# Tor Bridge Configuration with QuicTor PT
+
+# Run as a bridge
+BridgeRelay 1
+ORPort 127.0.0.1:9001
+ExtORPort auto
+
+# Use QuicTor as a server-side pluggable transport
+ServerTransportPlugin quictor exec /app/target/debug/quictor-pt
+ServerTransportListenAddr quictor 0.0.0.0:4433
+
+# Contact info (required for bridges)
+ContactInfo quictor-test@example.com
+
+# Don't act as an exit node
+ExitPolicy reject *:*
+
+# For testing: Do not register bridge information in the public directory
+PublishServerDescriptor 0
+
+# Logging
+Log notice stdout
+
+# Data directory
+DataDirectory /var/lib/tor

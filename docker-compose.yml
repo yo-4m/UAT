@@ -1,0 +1,113 @@
+version: '3.8'
+
+services:
+  tor-bridge:
+    image: debian:bookworm-slim
+    container_name: tor-bridge
+    volumes:
+      - .:/app
+      - ./tor-config/bridge:/etc/tor
+      - cargo-cache:/usr/local/cargo/registry
+      - tor-bridge-data:/var/lib/tor
+    working_dir: /app
+    networks:
+      - quictor-net
+    ports:
+      - "4433:4433/udp"
+    command: >
+      bash -c "
+        export DEBIAN_FRONTEND=noninteractive &&
+        apt-get update &&
+        apt-get install -y -o Dpkg::Options::='--force-confold' tor curl build-essential pkg-config libssl-dev &&
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y &&
+        . /root/.cargo/env &&
+        cargo build &&
+        mkdir -p /var/lib/tor &&
+        chown -R debian-tor:debian-tor /var/lib/tor &&
+        su -s /bin/bash debian-tor -c 'tor -f /etc/tor/torrc'
+      "
+
+  tor-client:
+    image: debian:bookworm-slim
+    container_name: tor-client
+    volumes:
+      - .:/app
+      - ./tor-config/client:/etc/tor
+      - cargo-cache:/usr/local/cargo/registry
+      - tor-client-data:/var/lib/tor
+    working_dir: /app
+    networks:
+      - quictor-net
+    ports:
+      - "9050:9050"
+    depends_on:
+      - tor-bridge
+    environment:
+      - QUIC_SERVER_ADDR=tor-bridge:4433
+    command: >
+      bash -c "
+        export DEBIAN_FRONTEND=noninteractive &&
+        export QUIC_SERVER_ADDR=tor-bridge:4433 &&
+        apt-get update &&
+        apt-get install -y -o Dpkg::Options::='--force-confold' tor curl build-essential pkg-config libssl-dev &&
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y &&
+        . /root/.cargo/env &&
+        cargo build &&
+        mkdir -p /var/lib/tor &&
+        chown -R debian-tor:debian-tor /var/lib/tor &&
+        su -s /bin/bash debian-tor -c 'export QUIC_SERVER_ADDR=tor-bridge:4433 && tor -f /etc/tor/torrc'
+      "
+
+  pt-server:
+    build: .
+    container_name: pt-server
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+    working_dir: /app
+    environment:
+      - TOR_PT_MANAGED_TRANSPORT_VER=1
+      - TOR_PT_SERVER_TRANSPORTS=quictor
+      - TOR_PT_SERVER_BINDADDR=quictor-0.0.0.0:4433
+      - TOR_PT_ORPORT=127.0.0.1:9001
+      - TOR_PT_STATE_LOCATION=/tmp/pt_state
+      - RUST_LOG=info
+    command: bash -c "nc -l -p 9001 -k & cargo run --bin quictor-pt"
+    networks:
+      - quictor-net
+    profiles:
+      - standalone
+    ports:
+      - "4433:4433/udp"
+
+  pt-client:
+    build: .
+    container_name: pt-client
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+    working_dir: /app
+    environment:
+      - TOR_PT_MANAGED_TRANSPORT_VER=1
+      - TOR_PT_CLIENT_TRANSPORTS=quictor
+      - TOR_PT_STATE_LOCATION=/tmp/pt_state
+      - QUIC_SERVER_ADDR=pt-server:4433
+      - RUST_LOG=info
+    command: cargo run --bin quictor-pt
+    networks:
+      - quictor-net
+    profiles:
+      - standalone
+    ports:
+      - "1080:1080"
+    depends_on:
+      - pt-server
+
+networks:
+  quictor-net:
+    driver: bridge
+
+volumes:
+  cargo-cache:
+  tor-bridge-data:
+  tor-client-data:

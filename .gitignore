@@ -1,0 +1,17 @@
+# Rust
+target/
+Cargo.lock
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# OS
+.DS_Store
+Thumbs.db
+tor-config/client/torrc
