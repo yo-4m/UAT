@@ -85,3 +85,13 @@ src/
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues and pull requests.
+
+
+
+
+
+## Disclaimer
+
+The developers assume no responsibility whatsoever for any damages arising from the use of this software.
+
+This software is provided for academic and technical research aimed at privacy protection and the advancement of the Tor Project. It does not endorse or support its use for illegal activities.
