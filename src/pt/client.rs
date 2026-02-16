@@ -1,6 +1,42 @@
 use super::env::ClientEnv;
 use crate::socks5::Socks5Server;
-use quinn::Endpoint;
+use quinn::{Connection, Endpoint};
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+type ConnectionMap = Arc<Mutex<HashMap<SocketAddr, Connection>>>;
+
+async fn get_or_create_connection(
+    connections: &ConnectionMap,
+    endpoint: &Endpoint,
+    addr: SocketAddr,
+) -> anyhow::Result<Connection> {
+    use anyhow::Context;
+
+    let mut map = connections.lock().await;
+
+    // Remove stale connection if it's closed
+    if let Some(conn) = map.get(&addr) {
+        if conn.close_reason().is_some() {
+            map.remove(&addr);
+        }
+    }
+
+    if let Some(conn) = map.get(&addr) {
+        return Ok(conn.clone());
+    }
+
+    let connection = endpoint
+        .connect(addr, "localhost")?
+        .await
+        .context("Failed to connect to QUIC server")?;
+
+    tracing::info!("Established new QUIC connection to {}", addr);
+    map.insert(addr, connection.clone());
+    Ok(connection)
+}
 
 pub async fn run_client() -> anyhow::Result<()> {
     use anyhow::Context;
@@ -31,6 +67,8 @@ pub async fn run_client() -> anyhow::Result<()> {
     write_pt_message(&format!("CMETHOD quictor socks5 {}", socks_addr))?;
     write_pt_message("CMETHODS DONE")?;
 
+    let connections: ConnectionMap = Arc::new(Mutex::new(HashMap::new()));
+
     loop {
         let socks_conn = match socks_server.accept().await {
             Ok(conn) => conn,
@@ -44,10 +82,12 @@ pub async fn run_client() -> anyhow::Result<()> {
         let socks_stream = socks_conn.into_stream();
 
         let endpoint_clone = endpoint.clone();
+        let connections_clone = connections.clone();
 
         tokio::spawn(async move {
             if let Err(e) = handle_socks_connection(
-                endpoint_clone,
+                &connections_clone,
+                &endpoint_clone,
                 socks_stream,
                 quic_server_addr,
             ).await {
@@ -58,16 +98,14 @@ pub async fn run_client() -> anyhow::Result<()> {
 }
 
 async fn handle_socks_connection(
-    endpoint: Endpoint,
+    connections: &ConnectionMap,
+    endpoint: &Endpoint,
     socks_stream: tokio::net::TcpStream,
-    quic_server_addr: std::net::SocketAddr,
+    quic_server_addr: SocketAddr,
 ) -> anyhow::Result<()> {
     use anyhow::Context;
 
-    let connection = endpoint
-        .connect(quic_server_addr, "localhost")?
-        .await
-        .context("Failed to connect to QUIC server")?;
+    let connection = get_or_create_connection(connections, endpoint, quic_server_addr).await?;
 
     let (quic_send, quic_recv) = connection
         .open_bi()
