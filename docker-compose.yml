@@ -42,12 +42,9 @@ services:
       - "9050:9050"
     depends_on:
       - tor-bridge
-    environment:
-      - QUIC_SERVER_ADDR=tor-bridge:4433
     command: >
       bash -c "
         export DEBIAN_FRONTEND=noninteractive &&
-        export QUIC_SERVER_ADDR=tor-bridge:4433 &&
         apt-get update &&
         apt-get install -y -o Dpkg::Options::='--force-confold' tor curl build-essential pkg-config libssl-dev &&
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y &&
@@ -55,7 +52,7 @@ services:
         cargo build &&
         mkdir -p /var/lib/tor &&
         chown -R debian-tor:debian-tor /var/lib/tor &&
-        su -s /bin/bash debian-tor -c 'export QUIC_SERVER_ADDR=tor-bridge:4433 && tor -f /etc/tor/torrc'
+        su -s /bin/bash debian-tor -c 'tor -f /etc/tor/torrc'
       "
 
   pt-server:
@@ -64,13 +61,14 @@ services:
     volumes:
       - .:/app
       - cargo-cache:/usr/local/cargo/registry
+      - pt-state:/var/lib/pt_state
     working_dir: /app
     environment:
       - TOR_PT_MANAGED_TRANSPORT_VER=1
       - TOR_PT_SERVER_TRANSPORTS=quictor
       - TOR_PT_SERVER_BINDADDR=quictor-0.0.0.0:4433
       - TOR_PT_ORPORT=127.0.0.1:9001
-      - TOR_PT_STATE_LOCATION=/tmp/pt_state
+      - TOR_PT_STATE_LOCATION=/var/lib/pt_state
       - RUST_LOG=info
     command: bash -c "nc -l -p 9001 -k & cargo run --bin quictor-pt"
     networks:
@@ -91,7 +89,7 @@ services:
       - TOR_PT_MANAGED_TRANSPORT_VER=1
       - TOR_PT_CLIENT_TRANSPORTS=quictor
       - TOR_PT_STATE_LOCATION=/tmp/pt_state
-      - QUIC_SERVER_ADDR=pt-server:4433
+      - TOR_PT_CLIENT_TRANSPORT_OPTIONS=quictor:ca-cert=REPLACE_WITH_CA_CERT_HEX
       - RUST_LOG=info
     command: cargo run --bin quictor-pt
     networks:
@@ -111,3 +109,4 @@ volumes:
   cargo-cache:
   tor-bridge-data:
   tor-client-data:
+  pt-state:

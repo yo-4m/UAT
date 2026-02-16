@@ -9,7 +9,7 @@ pub async fn run_server() -> anyhow::Result<()> {
     let env = ServerEnv::from_env()
         .context("Failed to load server environment")?;
 
-    let server_config = crate::config::configure_server()
+    let (server_config, fingerprint) = crate::config::configure_server(&env.state_location)
         .context("Failed to configure QUIC server")?;
 
     let bind_addr = env.bind_addrs.get("quictor")
@@ -21,7 +21,7 @@ pub async fn run_server() -> anyhow::Result<()> {
     let orport = env.orport;
 
     write_pt_message(&format!("VERSION {}", PT_VERSION))?;
-    write_pt_message(&format!("SMETHOD quictor {}", bind_addr))?;
+    write_pt_message(&format!("SMETHOD quictor {} ARGS:ca-cert={}", bind_addr, fingerprint))?;
     write_pt_message("SMETHODS DONE")?;
 
     loop {

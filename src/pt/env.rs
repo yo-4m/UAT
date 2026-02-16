@@ -6,6 +6,7 @@ pub struct ClientEnv {
     pub transports: Vec<String>,
     pub state_location: String,
     pub proxy: Option<String>,
+    pub transport_options: HashMap<String, HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -14,6 +15,7 @@ pub struct ServerEnv {
     pub bind_addrs: HashMap<String, SocketAddr>,
     pub orport: SocketAddr,
     pub state_location: String,
+    pub transport_options: HashMap<String, HashMap<String, String>>,
 }
 
 impl ClientEnv {
@@ -33,10 +35,15 @@ impl ClientEnv {
 
         let proxy = std::env::var("TOR_PT_PROXY").ok();
 
+        let transport_options = parse_transport_options(
+            &std::env::var("TOR_PT_CLIENT_TRANSPORT_OPTIONS").unwrap_or_default()
+        );
+
         Ok(ClientEnv {
             transports,
             state_location,
             proxy,
+            transport_options,
         })
     }
 }
@@ -77,11 +84,35 @@ impl ServerEnv {
         let state_location = std::env::var("TOR_PT_STATE_LOCATION")
             .context("TOR_PT_STATE_LOCATION not set")?;
 
+        let transport_options = parse_transport_options(
+            &std::env::var("TOR_PT_SERVER_TRANSPORT_OPTIONS").unwrap_or_default()
+        );
+
         Ok(ServerEnv {
             transports,
             bind_addrs,
             orport,
             state_location,
+            transport_options,
         })
     }
+}
+
+fn parse_transport_options(s: &str) -> HashMap<String, HashMap<String, String>> {
+    let mut map: HashMap<String, HashMap<String, String>> = HashMap::new();
+    if s.is_empty() {
+        return map;
+    }
+    for part in s.split(';') {
+        if let Some(colon_pos) = part.find(':') {
+            let transport = part[..colon_pos].to_string();
+            let kv_str = &part[colon_pos + 1..];
+            if let Some(eq_pos) = kv_str.find('=') {
+                let key = kv_str[..eq_pos].to_string();
+                let value = kv_str[eq_pos + 1..].to_string();
+                map.entry(transport).or_default().insert(key, value);
+            }
+        }
+    }
+    map
 }

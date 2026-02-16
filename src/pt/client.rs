@@ -9,7 +9,12 @@ pub async fn run_client() -> anyhow::Result<()> {
     let env = ClientEnv::from_env()
         .context("Failed to load client environment")?;
 
-    let client_config = crate::config::configure_client()
+    let ca_cert_hex = env.transport_options
+        .get("quictor")
+        .and_then(|opts| opts.get("ca-cert"))
+        .context("Missing ca-cert in TOR_PT_CLIENT_TRANSPORT_OPTIONS (quictor:ca-cert=<hex>)")?;
+
+    let client_config = crate::config::configure_client(ca_cert_hex)
         .context("Failed to configure QUIC client")?;
     let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)
         .context("Failed to create QUIC endpoint")?;
@@ -35,28 +40,16 @@ pub async fn run_client() -> anyhow::Result<()> {
             }
         };
 
-        let target_addr = socks_conn.target_addr();
+        let quic_server_addr = socks_conn.target_addr();
         let socks_stream = socks_conn.into_stream();
-
-        let quic_server_addr_str = std::env::var("QUIC_SERVER_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:4433".to_string());
 
         let endpoint_clone = endpoint.clone();
 
         tokio::spawn(async move {
-            let quic_server_addr = match resolve_bridge_address(&quic_server_addr_str).await {
-                Ok(addr) => addr,
-                Err(e) => {
-                    tracing::error!("Failed to resolve bridge address '{}': {}", quic_server_addr_str, e);
-                    return;
-                }
-            };
-
             if let Err(e) = handle_socks_connection(
                 endpoint_clone,
                 socks_stream,
                 quic_server_addr,
-                target_addr,
             ).await {
                 tracing::error!("Failed to handle SOCKS5 connection: {}", e);
             }
@@ -68,7 +61,6 @@ async fn handle_socks_connection(
     endpoint: Endpoint,
     socks_stream: tokio::net::TcpStream,
     quic_server_addr: std::net::SocketAddr,
-    _target_addr: std::net::SocketAddr,
 ) -> anyhow::Result<()> {
     use anyhow::Context;
 
@@ -88,7 +80,7 @@ async fn handle_socks_connection(
 async fn bridge_socks5_to_quic(
     mut socks_stream: tokio::net::TcpStream,
     mut quic_send: quinn::SendStream,
-    mut quic_recv: quinn::RecvStream,
+    quic_recv: quinn::RecvStream,
 ) -> anyhow::Result<()> {
     use anyhow::Context;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -135,59 +127,4 @@ async fn bridge_socks5_to_quic(
     tracing::debug!("Connection closed: {} bytes to QUIC, {} bytes to SOCKS5", to_quic, to_socks);
 
     Ok(())
-}
-
-async fn resolve_bridge_address(addr_str: &str) -> anyhow::Result<std::net::SocketAddr> {
-    use anyhow::Context;
-
-    if let Ok(addr) = addr_str.parse::<std::net::SocketAddr>() {
-        tracing::info!("Using bridge address: {}", addr);
-        return Ok(addr);
-    }
-
-    tracing::info!("Resolving bridge hostname: {}", addr_str);
-
-    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host(addr_str)
-        .await
-        .context(format!("Failed to resolve hostname: {}", addr_str))?
-        .collect();
-
-    if addrs.is_empty() {
-        anyhow::bail!("No addresses found for hostname: {}", addr_str);
-    }
-
-    for addr in &addrs {
-        let ip = addr.ip();
-
-        if ip.is_loopback() || ip.is_unspecified() {
-            tracing::debug!("Skipping loopback/unspecified address: {}", addr);
-            continue;
-        }
-
-        if let std::net::IpAddr::V4(ipv4) = ip {
-            let octets = ipv4.octets();
-            let is_private =
-                octets[0] == 10 ||
-                (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31) ||
-                (octets[0] == 192 && octets[1] == 168);
-
-            if is_private {
-                tracing::debug!("Skipping private IPv4 address: {}", addr);
-                continue;
-            }
-        }
-
-        tracing::info!("Resolved bridge address to: {}", addr);
-        return Ok(*addr);
-    }
-    
-    for addr in &addrs {
-        if !addr.ip().is_loopback() {
-            tracing::warn!("Using non-public address (development mode?): {}", addr);
-            return Ok(*addr);
-        }
-    }
-
-    tracing::warn!("No valid public IP found, using first address: {}", addrs[0]);
-    Ok(addrs[0])
 }
