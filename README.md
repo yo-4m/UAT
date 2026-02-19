@@ -78,7 +78,7 @@ src/
 ## Important Notes
 
 - **Development Stage**: This is a proof-of-concept implementation and is not ready for production use.
-- **Self-Signed Certificates**: Currently uses self-signed certificates with verification disabled. For production use, proper certificate handling should be implemented.
+- **Self-Signed Certificate**: Currently, we only employ pinning methods using self-signed certificates. For production environments, we need to discuss whether WebPKI should be used.
 - **Security**: The QUIC layer does not provide authentication beyond TLS. Tor's own encryption handles the actual security of the traffic.
 
 
